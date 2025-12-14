@@ -1,9 +1,16 @@
-from fastapi import FastAPI
+import os
+import traceback
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
-import traceback
+
+# 1. Force Cache Directory to be inside the container's working directory
+# This fixes permission issues on Coolify
+CACHE_DIR = "/app/fastembed_cache"
+os.environ["FASTEMBED_CACHE_PATH"] = CACHE_DIR
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 app = FastAPI()
 
@@ -14,6 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global model variable
 model = None
 
 class EmbedRequest(BaseModel):
@@ -21,28 +29,42 @@ class EmbedRequest(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"status": "active", "model": "intfloat/multilingual-e5-small"}
+    return {
+        "status": "active", 
+        "model": "intfloat/multilingual-e5-small",
+        "cache_dir": CACHE_DIR,
+        "model_loaded": model is not None
+    }
 
 @app.post("/embed")
 async def embed(item: EmbedRequest):
     global model
+    print(f"📥 Received request: {item.text[:50]}...") // Log first 50 chars
+
     try:
+        # Lazy Load Model
         if model is None:
-            print("⏳ Loading Model for the first time...")
-            # threads=1 prevents the VPS from freezing
-            model = TextEmbedding(model_name="intfloat/multilingual-e5-small", threads=1)
-            print("✅ Model Loaded!")
+            print(f"⏳ Downloading model to {CACHE_DIR} ...")
+            # threads=1 is safer for small VPS
+            model = TextEmbedding(
+                model_name="intfloat/multilingual-e5-small", 
+                threads=1,
+                cache_dir=CACHE_DIR
+            )
+            print("✅ Model Loaded Successfully!")
 
-        # Handle empty text to prevent crashes
-        if not item.text or item.text.strip() == "":
-            return {"vector": []}
-
-        # Convert
+        # Generate Vector
+        print("🧮 Calculating Vector...")
         embeddings = list(model.embed([item.text]))
-        return {"vector": embeddings[0].tolist()}
+        vector = embeddings[0].tolist()
+        
+        print(f"✅ Success! Vector length: {len(vector)}")
+        return {"vector": vector}
 
     except Exception as e:
-        # This prints the REAL error to Coolify logs and returns it to Directus
-        print(f"❌ ERROR: {str(e)}")
-        traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        print("❌ CRITICAL ERROR ❌")
+        traceback.print_exc() # This prints the full error to Coolify Logs
+        return JSONResponse(
+            status_code=500, 
+            content={"error": str(e), "type": type(e).__name__}
+        )
