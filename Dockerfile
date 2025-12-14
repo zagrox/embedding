@@ -3,10 +3,14 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-RUN pip install --no-cache-dir fastapi uvicorn[standard] fastembed
+# We install fastembed, fastapi, and uvicorn
+RUN pip install --no-cache-dir fastembed fastapi uvicorn[standard]
 
-# Copy code
+# Copy the app code
 COPY main.py .
 
-# Run API
+# Expose the port
+EXPOSE 8000
+
+# Start the server
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
