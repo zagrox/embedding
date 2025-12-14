@@ -1,11 +1,12 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
+import traceback
 
 app = FastAPI()
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,7 +14,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variable for the model (starts empty)
 model = None
 
 class EmbedRequest(BaseModel):
@@ -26,12 +26,23 @@ def read_root():
 @app.post("/embed")
 async def embed(item: EmbedRequest):
     global model
-    # Lazy Load: Only download/load the model when actually needed
-    if model is None:
-        print("Model not loaded. Downloading/Loading now...")
-        model = TextEmbedding(model_name="intfloat/multilingual-e5-small")
-        print("Model loaded successfully!")
+    try:
+        if model is None:
+            print("⏳ Loading Model for the first time...")
+            # threads=1 prevents the VPS from freezing
+            model = TextEmbedding(model_name="intfloat/multilingual-e5-small", threads=1)
+            print("✅ Model Loaded!")
 
-    # Convert text to vector
-    embeddings = list(model.embed([item.text]))
-    return {"vector": embeddings[0].tolist()}
+        # Handle empty text to prevent crashes
+        if not item.text or item.text.strip() == "":
+            return {"vector": []}
+
+        # Convert
+        embeddings = list(model.embed([item.text]))
+        return {"vector": embeddings[0].tolist()}
+
+    except Exception as e:
+        # This prints the REAL error to Coolify logs and returns it to Directus
+        print(f"❌ ERROR: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
