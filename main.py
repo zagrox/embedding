@@ -2,11 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
-import os
 
 app = FastAPI()
 
-# Allow connections from anywhere (simplifies Coolify setup)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,11 +13,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Model (Downloads on first run)
-# Using 'multilingual-e5-small' for Persian support
-print("Loading model...")
-model = TextEmbedding(model_name="intfloat/multilingual-e5-small")
-print("Model loaded!")
+# Global variable for the model (starts empty)
+model = None
 
 class EmbedRequest(BaseModel):
     text: str
@@ -29,6 +25,13 @@ def read_root():
 
 @app.post("/embed")
 async def embed(item: EmbedRequest):
+    global model
+    # Lazy Load: Only download/load the model when actually needed
+    if model is None:
+        print("Model not loaded. Downloading/Loading now...")
+        model = TextEmbedding(model_name="intfloat/multilingual-e5-small")
+        print("Model loaded successfully!")
+
     # Convert text to vector
     embeddings = list(model.embed([item.text]))
     return {"vector": embeddings[0].tolist()}
