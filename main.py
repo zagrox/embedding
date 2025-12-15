@@ -7,7 +7,6 @@ from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
 
 # 1. Force Cache Directory to be inside the container's working directory
-# This fixes permission issues on Coolify
 CACHE_DIR = "/app/fastembed_cache"
 os.environ["FASTEMBED_CACHE_PATH"] = CACHE_DIR
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -39,7 +38,8 @@ def read_root():
 @app.post("/embed")
 async def embed(item: EmbedRequest):
     global model
-    print(f"📥 Received request: {item.text[:50]}...") // Log first 50 chars
+    # FIXED: Using # for comments instead of //
+    print(f"📥 Received request: {item.text[:50]}...") 
 
     try:
         # Lazy Load Model
