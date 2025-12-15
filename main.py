@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
 
-# 1. Force Cache Directory to be inside the container's working directory
+# 1. Force Cache Directory
 CACHE_DIR = "/app/fastembed_cache"
 os.environ["FASTEMBED_CACHE_PATH"] = CACHE_DIR
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -20,8 +20,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global model variable
 model = None
+
+# Using a standard supported multilingual model
+# This model outputs vector size: 384
+MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 class EmbedRequest(BaseModel):
     text: str
@@ -30,7 +33,7 @@ class EmbedRequest(BaseModel):
 def read_root():
     return {
         "status": "active", 
-        "model": "intfloat/multilingual-e5-small",
+        "model": MODEL_NAME,
         "cache_dir": CACHE_DIR,
         "model_loaded": model is not None
     }
@@ -38,22 +41,18 @@ def read_root():
 @app.post("/embed")
 async def embed(item: EmbedRequest):
     global model
-    # FIXED: Using # for comments instead of //
-    print(f"📥 Received request: {item.text[:50]}...") 
+    print(f"📥 Received request: {item.text[:50]}...")
 
     try:
-        # Lazy Load Model
         if model is None:
-            print(f"⏳ Downloading model to {CACHE_DIR} ...")
-            # threads=1 is safer for small VPS
+            print(f"⏳ Downloading model {MODEL_NAME} to {CACHE_DIR} ...")
             model = TextEmbedding(
-                model_name="intfloat/multilingual-e5-small", 
+                model_name=MODEL_NAME, 
                 threads=1,
                 cache_dir=CACHE_DIR
             )
             print("✅ Model Loaded Successfully!")
 
-        # Generate Vector
         print("🧮 Calculating Vector...")
         embeddings = list(model.embed([item.text]))
         vector = embeddings[0].tolist()
@@ -63,7 +62,7 @@ async def embed(item: EmbedRequest):
 
     except Exception as e:
         print("❌ CRITICAL ERROR ❌")
-        traceback.print_exc() # This prints the full error to Coolify Logs
+        traceback.print_exc()
         return JSONResponse(
             status_code=500, 
             content={"error": str(e), "type": type(e).__name__}
