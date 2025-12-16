@@ -6,10 +6,11 @@ from pydantic import BaseModel
 from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
 
-# 1. Force Cache Directory
 CACHE_DIR = "/app/fastembed_cache"
 os.environ["FASTEMBED_CACHE_PATH"] = CACHE_DIR
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 app = FastAPI()
 
@@ -21,49 +22,57 @@ app.add_middleware(
 )
 
 model = None
-
-# Using a standard supported multilingual model
-# This model outputs vector size: 384
-MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+model_loaded = False
 
 class EmbedRequest(BaseModel):
     text: str
 
+@app.on_event("startup")
+def startup_event():
+    global model, model_loaded
+    try:
+        print("🔄 Loading embedding model on startup...")
+        model = TextEmbedding(MODEL_NAME)
+        # warm up: actually compute once so everything is downloaded/loaded
+        _ = list(model.embed(["warmup"]))
+        model_loaded = True
+        print("✅ Model loaded and warmed up.")
+    except Exception as e:
+        print("❌ CRITICAL ERROR LOADING MODEL ON STARTUP")
+        traceback.print_exc()
+        model_loaded = False
+
 @app.get("/")
-def read_root():
+def root():
     return {
-        "status": "active", 
+        "status": "active",
         "model": MODEL_NAME,
         "cache_dir": CACHE_DIR,
-        "model_loaded": model is not None
+        "model_loaded": model_loaded,
     }
 
 @app.post("/embed")
-async def embed(item: EmbedRequest):
-    global model
-    print(f"📥 Received request: {item.text[:50]}...")
-
+def embed_text(req: EmbedRequest):
+    global model, model_loaded
     try:
-        if model is None:
-            print(f"⏳ Downloading model {MODEL_NAME} to {CACHE_DIR} ...")
-            model = TextEmbedding(
-                model_name=MODEL_NAME, 
-                threads=1,
-                cache_dir=CACHE_DIR
-            )
-            print("✅ Model Loaded Successfully!")
-
-        print("🧮 Calculating Vector...")
-        embeddings = list(model.embed([item.text]))
-        vector = embeddings[0].tolist()
-        
-        print(f"✅ Success! Vector length: {len(vector)}")
-        return {"vector": vector}
-
+        if not model_loaded or model is None:
+            # last-resort reload if startup failed
+            startup_event()
+        vectors = list(model.embed([req.text]))
+        return {"embedding": vectors[0]}
     except Exception as e:
-        print("❌ CRITICAL ERROR ❌")
+        print("❌ CRITICAL ERROR DURING EMBEDDING")
         traceback.print_exc()
         return JSONResponse(
-            status_code=500, 
-            content={"error": str(e), "type": type(e).__name__}
+            status_code=500,
+            content={"error": str(e), "traceback": traceback.format_exc()},
         )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print("❌ UNHANDLED EXCEPTION")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc), "traceback": traceback.format_exc()},
+    )
