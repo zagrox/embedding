@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fastembed import TextEmbedding
 from fastapi.middleware.cors import CORSMiddleware
+import threading  # <-- NEW
 
 CACHE_DIR = "/app/fastembed_cache"
 os.environ["FASTEMBED_CACHE_PATH"] = CACHE_DIR
@@ -27,13 +28,16 @@ model_loaded = False
 class EmbedRequest(BaseModel):
     text: str
 
+# Lock to serialize embedding calls
+embed_lock = threading.Lock()  # <-- NEW
+
 @app.on_event("startup")
 def startup_event():
     global model, model_loaded
     try:
         print("🔄 Loading embedding model on startup...")
         model = TextEmbedding(MODEL_NAME)
-        # warm up: actually compute once so everything is downloaded/loaded
+        # warm up to force full load
         _ = list(model.embed(["warmup"]))
         model_loaded = True
         print("✅ Model loaded and warmed up.")
@@ -51,22 +55,24 @@ def root():
         "model_loaded": model_loaded,
     }
 
+# ===== This is the ONLY endpoint you need to change =====
 @app.post("/embed")
 def embed_text(req: EmbedRequest):
     global model, model_loaded
-    try:
-        if not model_loaded or model is None:
-            # last-resort reload if startup failed
-            startup_event()
-        vectors = list(model.embed([req.text]))
-        return {"embedding": vectors[0]}
-    except Exception as e:
-        print("❌ CRITICAL ERROR DURING EMBEDDING")
-        traceback.print_exc()
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e), "traceback": traceback.format_exc()},
-        )
+    with embed_lock:  # <-- NEW: only one embedding at a time
+        try:
+            if not model_loaded or model is None:
+                startup_event()
+            vectors = list(model.embed([req.text]))
+            return {"embedding": vectors[0]}
+        except Exception as e:
+            print("❌ CRITICAL ERROR DURING EMBEDDING")
+            traceback.print_exc()
+            return JSONResponse(
+                status_code=500,
+                content={"error": str(e), "traceback": traceback.format_exc()},
+            )
+# ========================================================
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
